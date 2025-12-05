@@ -1,4 +1,3 @@
-
 import os
 import base64
 import re
@@ -75,6 +74,10 @@ if not GPT_API_KEY:
     st.stop()
 
 client = OpenAI(api_key=GPT_API_KEY)
+
+# 이미지 모델 / 사이즈 설정
+IMAGE_MODEL = "gpt-image-1"       # 현재 images API가 지원하는 최신 모델
+IMAGE_SIZE = "1024x1024"          # GPT Image 계열에서 허용되는 가장 작은 사이즈
 
 # =========================
 # 세션 상태 기본값
@@ -178,15 +181,16 @@ def parse_script(text: str):
     return scenes
 
 
-def generate_image(prompt: str, size: str = "512x512"):
+def generate_image(prompt: str):
     """OpenAI 이미지 하나 생성하고 base64 문자열 반환"""
     if not prompt:
         return None
 
     resp = client.images.generate(
-        model="gpt-image-1-mini",
+        model=IMAGE_MODEL,
         prompt=prompt,
-        size=size,
+        size=IMAGE_SIZE,       # 1024x1024
+        quality="low",         # 속도/비용 절약용
         n=1,
     )
     b64_str = resp.data[0].b64_json  # base64 인코딩된 PNG
