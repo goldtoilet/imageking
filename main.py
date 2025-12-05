@@ -147,14 +147,14 @@ def login_screen():
             if login_id == LOGIN_ID_ENV and login_pw == LOGIN_PW_ENV:
                 st.session_state["logged_in"] = True
                 st.success("✅ 로그인 성공")
-                st.rerun()
+                st.experimental_rerun()
             else:
                 st.error("❌ 아이디 또는 비밀번호가 올바르지 않습니다.")
         else:
             # 환경변수 미사용 시, 아무 값이나 넣으면 통과 (개발용)
             st.session_state["logged_in"] = True
             st.warning("환경변수가 없어 임시로 로그인을 통과시켰습니다.")
-            st.rerun()
+            st.experimental_rerun()
 
     st.session_state["login_id"] = login_id
     st.session_state["login_pw"] = login_pw
