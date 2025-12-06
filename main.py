@@ -156,6 +156,7 @@ st.session_state.setdefault("image_quality", "low")
 st.session_state.setdefault("video_model_label", "이미지 시퀀스 → MP4 (로컬 합성)")
 st.session_state.setdefault("seconds_per_scene", 3.0)
 st.session_state.setdefault("video_bytes", None)
+st.session_state.setdefault("video_error_msg", None)
 
 # =========================
 # 로그인 화면
@@ -273,7 +274,6 @@ def build_full_prompt(base_prompt: str) -> str:
 
     lock_char = st.session_state.get("lock_character", False)
     if lock_char:
-        # 스틱맨을 항상 등장시키는 추가 설명
         style_wrapper += (
             "\nThe main character is a recurring simple 2D stickman narrator with a white circular face "
             "and small black-dot eyes, always present somewhere in the scene, explaining or reacting to the situation.\n"
@@ -300,10 +300,10 @@ def generate_image(prompt: str):
         model=model,
         prompt=full_prompt,
         size=size,
-        quality=quality,  # low / high
+        quality=quality,
         n=1,
     )
-    b64_str = resp.data[0].b64_json  # base64 인코딩된 PNG
+    b64_str = resp.data[0].b64_json
     return b64_str
 
 
@@ -325,15 +325,18 @@ def b64_to_bytes(b64_str: str):
     return base64.b64decode(b64_str)
 
 
-def create_video_from_scenes(scenes, seconds_per_scene: float, fps: int = 30) -> bytes | None:
+def create_video_from_scenes(
+    scenes,
+    seconds_per_scene: float,
+    fps: int = 30,
+) -> tuple[bytes | None, str | None]:
     """
-    이미지가 들어있는 scenes 리스트를 사용해 MP4 영상을 생성하고, 영상의 바이너리(bytes)를 반환.
-    scene["image_b64"] 가 있는 항목만 사용.
-    imageio가 없는 환경이면 None 반환.
+    이미지가 들어있는 scenes 리스트를 사용해 MP4 영상을 생성.
+    성공 시 (video_bytes, None) 반환.
+    실패 시 (None, 에러메시지) 반환.
     """
     if imageio is None:
-        # 모듈이 없으면 영상 생성 불가
-        return None
+        return None, "IMAGEIO_MISSING"
 
     images = []
     for scene in scenes:
@@ -344,31 +347,39 @@ def create_video_from_scenes(scenes, seconds_per_scene: float, fps: int = 30) ->
         images.append(img)
 
     if not images:
-        return None
+        return None, "NO_IMAGES"
 
     frames_per_scene = max(1, int(seconds_per_scene * fps))
-
     output_path = "aniking_output.mp4"
-    writer = imageio.get_writer(output_path, fps=fps)
-    for img in images:
-        frame = imageio.asarray(img)
-        for _ in range(frames_per_scene):
-            writer.append_data(frame)
-    writer.close()
 
-    with open(output_path, "rb") as f:
-        return f.read()
+    try:
+        writer = imageio.get_writer(output_path, fps=fps)  # imageio-ffmpeg 필요
+    except Exception as e:
+        return None, f"WRITER_ERROR: {e}"
 
+    try:
+        for img in images:
+            frame = imageio.asarray(img)
+            for _ in range(frames_per_scene):
+                writer.append_data(frame)
+        writer.close()
+    except Exception as e:
+        return None, f"WRITE_FRAME_ERROR: {e}"
+
+    try:
+        with open(output_path, "rb") as f:
+            return f.read(), None
+    except Exception as e:
+        return None, f"FILE_READ_ERROR: {e}"
 
 # =========================
-# 사이드바 (스타일 / 옵션 / 모델 / 로그아웃)
+# 사이드바
 # =========================
 with st.sidebar:
     st.markdown("### 🎬 AI 애니메이션 메이커")
     st.write(f"👤 로그인: **{st.session_state.get('login_id', '')}**")
     st.markdown("---")
 
-    # 이미지 생성 모델 선택
     st.markdown("#### 🖼 이미지 생성 모델")
     st.session_state["image_model_label"] = st.selectbox(
         "이미지 생성 모델",
@@ -432,6 +443,7 @@ with st.sidebar:
         st.session_state["scenes"] = []
         st.session_state["raw_script"] = ""
         st.session_state["video_bytes"] = None
+        st.session_state["video_error_msg"] = None
         st.rerun()
 
 # =========================
@@ -485,8 +497,8 @@ if clicked_generate:
                 bulk_generate_images(st.session_state["scenes"], max_workers=4)
 
             st.success("✅ 대본이 자동으로 분류되고 이미지가 생성되었습니다.")
-            # 새로 이미지를 만들면 이전 영상은 초기화
             st.session_state["video_bytes"] = None
+            st.session_state["video_error_msg"] = None
 
 # 최신 scenes 반영
 scenes = st.session_state.get("scenes", [])
@@ -499,10 +511,10 @@ if clicked_video:
         st.warning("먼저 이미지를 생성한 후에 영상을 만들 수 있습니다.")
     else:
         if imageio is None:
-            st.error(
-                "영상 생성을 위해서는 `imageio` 패키지가 필요합니다.\n\n"
-                "로컬 또는 Streamlit Cloud에서 `requirements.txt`에 `imageio`를 추가한 뒤 다시 배포해주세요."
+            st.session_state["video_error_msg"] = (
+                "`imageio` 모듈이 없습니다. requirements.txt 에 `imageio` 와 `imageio-ffmpeg` 를 추가한 뒤 다시 배포해주세요."
             )
+            st.session_state["video_bytes"] = None
         else:
             video_model_label = st.session_state.get("video_model_label", "이미지 시퀀스 → MP4 (로컬 합성)")
             video_model = VIDEO_MODELS.get(video_model_label, "local_sequence_mp4")
@@ -510,18 +522,27 @@ if clicked_video:
             if video_model == "local_sequence_mp4":
                 seconds_per_scene = float(st.session_state.get("seconds_per_scene", 3.0))
                 with st.spinner("영상을 생성하는 중입니다..."):
-                    video_bytes = create_video_from_scenes(
+                    video_bytes, err_msg = create_video_from_scenes(
                         scenes,
                         seconds_per_scene=seconds_per_scene,
                         fps=30,
                     )
                 if video_bytes:
                     st.session_state["video_bytes"] = video_bytes
+                    st.session_state["video_error_msg"] = None
                     st.success("🎬 영상이 생성되었습니다.")
                 else:
-                    st.error("영상 생성에 사용할 이미지가 없습니다.")
+                    st.session_state["video_bytes"] = None
+                    # err_msg 안에 imageio-ffmpeg 관련 메시지가 들어있을 수 있음
+                    st.session_state["video_error_msg"] = (
+                        "영상 생성 중 오류가 발생했습니다.\n\n"
+                        "대부분은 `imageio-ffmpeg` 가 설치되지 않았거나 ffmpeg 플러그인을 찾지 못해서 생기는 문제입니다.\n"
+                        "requirements.txt 에 `imageio-ffmpeg` 를 추가하고 다시 배포해 주세요.\n\n"
+                        f"내부 오류 메시지: {err_msg}"
+                    )
             else:
-                st.error("아직 구현되지 않은 영상 생성 모델입니다.")
+                st.session_state["video_error_msg"] = "아직 구현되지 않은 영상 생성 모델입니다."
+                st.session_state["video_bytes"] = None
 
 # =========================
 # 결과 테이블 출력 (container + 스크롤 박스)
@@ -532,7 +553,6 @@ if scenes:
     with st.container():
         st.markdown('<div class="results-container">', unsafe_allow_html=True)
 
-        # 헤더
         header_cols = st.columns([0.5, 2, 2, 1, 0.9])
         header_cols[0].markdown("**번호**")
         header_cols[1].markdown("**원본문장**")
@@ -542,35 +562,29 @@ if scenes:
 
         st.markdown("---")
 
-        # 각 행
         for i, scene in enumerate(scenes):
             cols = st.columns([0.5, 2, 2, 1, 0.9])
 
-            # 번호
             cols[0].write(scene["id"])
 
-            # 한국어 문장 (작은 폰트)
             korean_html = scene["korean"].replace("\n", "<br>")
             cols[1].markdown(
                 f'<div class="small-text-cell">{korean_html}</div>',
                 unsafe_allow_html=True,
             )
 
-            # 영어 프롬프트 (작은 폰트)
             prompt_html = scene["prompt_en"].replace("\n", "<br>")
             cols[2].markdown(
                 f'<div class="small-text-cell">{prompt_html}</div>',
                 unsafe_allow_html=True,
             )
 
-            # 이미지
             if scene["image_b64"]:
                 img_bytes = b64_to_bytes(scene["image_b64"])
                 cols[3].image(img_bytes, use_column_width=True)
             else:
                 cols[3].write("아직 이미지 없음")
 
-            # 재생성 버튼
             if cols[4].button("재 생성", key=f"regen_{scene['id']}"):
                 with st.spinner(f"{scene['id']}번 이미지를 다시 생성 중..."):
                     new_b64 = generate_image(scene["prompt_en"])
@@ -582,7 +596,7 @@ else:
     st.info("대본을 입력하고 **이미지 생성** 버튼을 눌러주세요.")
 
 # =========================
-# 생성된 영상 미리보기 / 다운로드
+# 생성된 영상 미리보기 / 다운로드 + 에러 표시
 # =========================
 if st.session_state.get("video_bytes"):
     st.subheader("🎬 생성된 영상 미리보기")
@@ -594,3 +608,6 @@ if st.session_state.get("video_bytes"):
         file_name="aniking_output.mp4",
         mime="video/mp4",
     )
+elif st.session_state.get("video_error_msg"):
+    st.subheader("⚠️ 영상 생성 오류")
+    st.error(st.session_state["video_error_msg"])
