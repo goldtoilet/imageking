@@ -468,7 +468,7 @@ if clicked_video:
                 st.session_state["video_error_msg"] = "아직 구현되지 않은 영상 생성 모델입니다."
                 st.session_state["video_bytes"] = None
 
-# =========================
+# ==========================
 # 결과 테이블 (스크롤 컨테이너)
 # =========================
 if scenes:
