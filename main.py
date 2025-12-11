@@ -26,7 +26,7 @@ load_dotenv()
 # 페이지 기본 설정 & 스타일
 # =========================
 st.set_page_config(
-    page_title="AI 애니메이션 메이커",
+    page_title="imageking",
     page_icon="🎬",
     layout="wide",
 )
@@ -338,7 +338,7 @@ def create_video_from_scenes(
         return None, "NO_IMAGES"
 
     frames_per_scene = max(1, int(seconds_per_scene * fps))
-    output_path = "aniking_output.mp4"
+    output_path = "imageking_output.mp4"
 
     try:
         writer = imageio.get_writer(output_path, fps=fps)  # imageio-ffmpeg 필요
@@ -591,7 +591,7 @@ if st.session_state.get("video_bytes"):
     st.download_button(
         label="📥 영상 다운로드 (MP4)",
         data=st.session_state["video_bytes"],
-        file_name="aniking_output.mp4",
+        file_name="imageking_output.mp4",
         mime="video/mp4",
     )
 elif st.session_state.get("video_error_msg"):
